@@ -57,7 +57,7 @@ The MongoDB client may be configured using these application properties.
 |`minimum-connections`|0|The minimum number of connections to open to the MongoDB server|
 |`maximum-connections`|1000|The maximum number of connections to open to the MongoDB server|
 |`connection-timeout`|30 s|The amount of time to allow for a new connection to open to the MongoDB server|
-|`request-timeout`|60 s||The amount of time to allow for a request to the MongoDB server to complete
+|`request-timeout`|60 s|The amount of time to allow for a request to the MongoDB server to complete|
 |`inactivity-timeout`|300 s|The amount of time to allow before surplus connections to the MongoDB server are pruned|
 |`maximum-lifetime`|unlimited|The maximum lifetime of a connection to the MongoDB server|
 
