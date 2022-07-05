@@ -123,6 +123,23 @@ The MongoDB listener may be configured using these application properties.
 |`retry-interval`|60 s|The interval at which to retry items in the collection, for which processing had previously failed|
 |`refresh-interval`|5 s|The interval at which to refresh the statistics that are recorded in the logs for the collection|
 
+&nbsp;
+## Service
+Use the MongoDB service harness to get a service with automatic transaction correlation, along with the standard Melior logging system and a configuration object that may be used to access the application properties anywhere and at any time in the application code, even in the constructor.
+```
+public class MyApplication extends MongoService
+
+public MyApplication(ServiceContext serviceContext, MongoListener<Person> listener) throws ApplicationException {
+    super(serviceContext);
+
+    registerCollection(listener, "people")
+        .single(person -> processPerson(person))
+        .start();
+}
+```
+
+The MongoDB service harness automatically generates a unique correlation id for each transaction that originates from the MongoDB listener, either for a batch of items or for a single item, and makes the correlation id available in the transaction context for other components to access.  For example, if the REST client is used to communicate with another service then the **X-Request-Id** HTTP header is automatically populated with the correlation id.
+
 &nbsp;  
 ## References
 Refer to the [**Melior Service Harness :: Core**](https://github.com/MeliorArtefacts/service-harness-core) module for detail on the Melior logging system and available utilities.
