@@ -275,7 +275,7 @@ public class MongoClient extends MongoClientConfig{
       managedItems.add(new MongoItem<T>(item, MongoState.ITEM_STATE_NEW.getId()));
     }
 
-        insertManaged(collectionName, managedItems);
+        insert(collectionName, managedItems);
   }
 
   /**
