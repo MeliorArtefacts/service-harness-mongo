@@ -32,6 +32,8 @@ public class MongoListenerBuilder<T>{
 
   /**
    * Create Mongo listener builder.
+   * @param <T> The type
+   * @param entityClass The entity class
    * @return The Mongo listener builder
    */
   public static <T> MongoListenerBuilder<T> create(
@@ -55,7 +57,7 @@ public class MongoListenerBuilder<T>{
 
   /**
    * Set Mongo client.
-   * @param sslContext The SSL context
+   * @param mongoClient The Mongo client
    * @return The Mongo listener builder
    */
   public MongoListenerBuilder<T> client(

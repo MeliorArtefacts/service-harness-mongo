@@ -41,7 +41,10 @@ public abstract class MongoService extends AbstractService{
 
   /**
    * Register collection to listen to.
+   * @param <T> The type
+   * @param mongoListener The Mongo listener
    * @param collectionName The collection name
+   * @return The Mongo collection
    * @throws ApplicationException if unable to register the collection
    */
   protected <T> MongoCollection<T> registerCollection(

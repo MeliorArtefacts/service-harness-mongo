@@ -13,6 +13,7 @@ import org.melior.client.mongo.MongoItem;
 import org.melior.service.work.BatchProcessor;
 import org.melior.service.work.SingletonProcessor;
 import org.melior.util.collection.BoundedBlockingQueue;
+import org.melior.util.collection.Queue;
 import org.melior.util.number.ClampedCounter;
 import org.melior.util.number.Counter;
 
@@ -56,9 +57,9 @@ public class MongoCollection<T>{
 
         this.name = name;
 
-        batchQueue = new BoundedBlockingQueue<List<MongoItem<T>>>(capacity);
+        batchQueue = Queue.ofBoundedBlocking(capacity);
 
-        singletonQueue = new BoundedBlockingQueue<MongoItem<T>>(capacity);
+        singletonQueue = Queue.ofBoundedBlocking(capacity);
 
         totalItems = Counter.of(0);
     failedItems = Counter.of(0);

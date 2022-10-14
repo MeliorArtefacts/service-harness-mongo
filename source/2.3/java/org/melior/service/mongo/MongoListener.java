@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
 import org.melior.client.exception.RemotingException;
 import org.melior.client.mongo.MongoClient;
 import org.melior.client.mongo.MongoItem;
@@ -140,7 +142,7 @@ public class MongoListener<T> extends MongoListenerConfig{
         while (ServiceState.isActive() == true){
 
             while (ServiceState.isSuspended() == true){
-                ThreadControl.wait(collection, 100);
+                ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
       }
 
             while (true){
@@ -186,7 +188,7 @@ public class MongoListener<T> extends MongoListenerConfig{
 
       }
 
-            ThreadControl.wait(collection, getPollInterval());
+            ThreadControl.wait(collection, getPollInterval(), TimeUnit.MILLISECONDS);
     }
 
   }
@@ -202,7 +204,7 @@ public class MongoListener<T> extends MongoListenerConfig{
         while (ServiceState.isActive() == true){
 
             while (ServiceState.isSuspended() == true){
-                ThreadControl.wait(collection, 100);
+                ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
       }
 
       try{
@@ -214,14 +216,12 @@ public class MongoListener<T> extends MongoListenerConfig{
                     processSingles(collection);
         }
         else{
-                    ThreadControl.wait(collection, 100);
+                    ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
         }
 
       }
       catch (Throwable exception){
         logger.error(methodName, exception.getMessage(), exception);
-
-        break;
       }
 
     }
@@ -404,7 +404,7 @@ public class MongoListener<T> extends MongoListenerConfig{
         while (ServiceState.isActive() == true){
 
             while (ServiceState.isSuspended() == true){
-                ThreadControl.wait(collection, 100);
+                ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
       }
 
       try{
@@ -419,11 +419,9 @@ public class MongoListener<T> extends MongoListenerConfig{
       }
       catch (Throwable exception){
         logger.error(methodName, exception.getMessage(), exception);
-
-        break;
       }
 
-            ThreadControl.wait(collection, getRefreshInterval());
+            ThreadControl.wait(collection, getRefreshInterval(), TimeUnit.MILLISECONDS);
     }
 
   }
@@ -439,7 +437,7 @@ public class MongoListener<T> extends MongoListenerConfig{
         while (ServiceState.isActive() == true){
 
             while (ServiceState.isSuspended() == true){
-                ThreadControl.wait(collection, 100);
+                ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
       }
 
       try{
@@ -451,11 +449,9 @@ public class MongoListener<T> extends MongoListenerConfig{
       }
       catch (Throwable exception){
         logger.error(methodName, exception.getMessage(), exception);
-
-        break;
       }
 
-            ThreadControl.wait(collection, getRetryInterval());
+            ThreadControl.wait(collection, getRetryInterval(), TimeUnit.MILLISECONDS);
     }
 
   }

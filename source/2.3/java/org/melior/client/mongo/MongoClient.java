@@ -136,6 +136,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert item in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param item The item
    * @throws RemotingException if unable to insert the item
@@ -179,6 +180,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert managed item in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param item The item
    * @throws RemotingException if unable to insert the item
@@ -191,6 +193,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param items The list of items
    * @throws RemotingException if unable to insert the items
@@ -204,6 +207,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert managed items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param items The list of items
    * @throws RemotingException if unable to insert the items
@@ -217,6 +221,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param items The list of items
    * @throws RemotingException if unable to insert the items
@@ -260,6 +265,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Insert managed items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param items The list of items
    * @throws RemotingException if unable to insert the items
@@ -280,6 +286,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Update item in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param item The item
    * @throws RemotingException if unable to update the item
@@ -323,6 +330,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Update items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param query The query to use
    * @param update The update to apply
@@ -369,6 +377,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Delete item from collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param item The item
    * @throws RemotingException if unable to delete the item
@@ -412,6 +421,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Delete items from collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param query The query to use
    * @throws RemotingException if unable to delete the items
@@ -456,6 +466,7 @@ public class MongoClient extends MongoClientConfig{
 
   /**
    * Find items in collection.
+   * @param <T> The type
    * @param collectionName The collection name
    * @param query The query to use
    * @param entityClass The result entity class
@@ -547,7 +558,14 @@ public class MongoClient extends MongoClientConfig{
    */
   private String trim(
     final Document document){
-    return StringUtil.replaceAll(document.toString(), "Document", "");
+        StringBuilder stringBuilder;
+
+        stringBuilder = new StringBuilder(document.toString());
+    StringUtil.replaceAll(stringBuilder, "Document", "");
+    StringUtil.replaceAll(stringBuilder, "{{", "{");
+    StringUtil.replaceAll(stringBuilder, "}}", "}");
+
+    return stringBuilder.toString();
   }
 
 }
