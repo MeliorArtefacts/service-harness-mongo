@@ -1,10 +1,10 @@
-/* __  __    _ _      
-  |  \/  |  | (_)       
+/* __  __      _ _            
+  |  \/  |    | (_)           
   | \  / | ___| |_  ___  _ __ 
   | |\/| |/ _ \ | |/ _ \| '__|
   | |  | |  __/ | | (_) | |   
   |_|  |_|\___|_|_|\___/|_|   
-    Service Harness
+        Service Harness
 */
 package org.melior.service.mongo;
 import java.util.ArrayList;
@@ -32,11 +32,34 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * TODO
+ * Implements an easy to use, auto-configuring MongoDB listener which listens
+ * to registered MongoDB collections and processes any new managed items which
+ * are added to the collections.
+ * <p>
+ * If a collection is configured with a {@code SingletonProcessor}, then any
+ * new managed items that are added to the collection will be processed by
+ * the listener individually.
+ * <p>
+ * If a collection is configured with a {@code BatchProcessor}, then any
+ * new managed items that are added to the collection will be processed by
+ * the listener in batches of the configured size.
+ * <p>
+ * If a collection is configured with both a {@code BatchProcessor} and a
+ * {@code SingletonProcessor}, then the listener will use the {@code SingletonProcessor}
+ * as a fall-back when processing of a batch fails.
+ * <p>
+ * If a collection is configured with a {@code BatchProcessor} then the implementer
+ * must ensure that processing of a batch of items either succeeds atomically
+ * or fails atomically.
+ * <p>
+ * The listener may be configured with multiple threads to speed up processing.
  * @author Melior
  * @since 2.3
+ * @see MongoCollection
+ * @see MongoItem
  */
-public class MongoListener<T> extends MongoListenerConfig{
+public class MongoListener<T> extends MongoListenerConfig {
+
     private Logger logger = LoggerFactory.getLogger(this.getClass());
 
     private Class<T> entityClass;
@@ -47,14 +70,15 @@ public class MongoListener<T> extends MongoListenerConfig{
 
     private Map<String, MongoCollection<T>> collectionMap;
 
-  /**
-   * Constructor.
-   * @param entityClass The entity class
-   * @param mongoClient The Mongo client
-   */
-  MongoListener(
-    final Class<T> entityClass,
-    final MongoClient mongoClient){
+    /**
+     * Constructor.
+     * @param entityClass The entity class
+     * @param mongoClient The Mongo client
+     */
+    MongoListener(
+        final Class<T> entityClass,
+        final MongoClient mongoClient) {
+
         super();
 
         this.entityClass = entityClass;
@@ -62,242 +86,266 @@ public class MongoListener<T> extends MongoListenerConfig{
         this.mongoClient = mongoClient;
 
         objectMapper = new ObjectMapper();
-    objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
         collectionMap = new HashMap<String, MongoCollection<T>>();
-  }
+    }
 
-  /**
-   * Register collection to listen to.
-   * @param collectionName The collection name
-   * @return The collection
-   */
-  public MongoCollection<T> register(
-    final String collectionName){
+    /**
+     * Register collection to listen to.
+     * @param collectionName The collection name
+     * @return The collection
+     */
+    public MongoCollection<T> register(
+        final String collectionName) {
+
         MongoCollection<T> collection;
 
         collection = collectionMap.get(collectionName);
 
-        if (collection == null){
+        if (collection == null) {
+
             collection = new MongoCollection<T>(this, collectionName, getThreads());
 
             collectionMap.put(collectionName, collection);
+        }
+
+        return collection;
     }
 
-    return collection;
-  }
+    /**
+     * Register collection to listen to.
+     * @param collectionName The collection name
+     * @return The collection
+     */
+    MongoCollection<T> registerInterceptor(
+        final String collectionName) {
 
-  /**
-   * Register collection to listen to.
-   * @param collectionName The collection name
-   * @return The collection
-   */
-  MongoCollection<T> registerInterceptor(
-    final String collectionName){
         MongoCollection<T> collection;
 
         collection = collectionMap.get(collectionName);
 
-        if (collection == null){
+        if (collection == null) {
+
             collection = new MongoRequestInterceptor<T>(this, collectionName, getThreads());
 
             collectionMap.put(collectionName, collection);
+        }
+
+        return collection;
     }
 
-    return collection;
-  }
+    /**
+     * Start listening to collection.
+     * @param collection The collection
+     */
+    void start(
+        final MongoCollection<T> collection) {
 
-  /**
-   * Start listening to collection.
-   * @param collection The collection
-   */
-  void start(
-    final MongoCollection<T> collection){
         final MongoCollection<T> c = collection;
-    DaemonThread.create(() -> listen(c));
+        DaemonThread.create(() -> listen(c));
 
-        for (int i = 0; i < getThreads(); i++){
-      DaemonThread.create(() -> process(c));
-    }
+        for (int i = 0; i < getThreads(); i++) {
+            DaemonThread.create(() -> process(c));
+        }
 
         DaemonThread.create(() -> refresh(c));
 
         DaemonThread.create(() -> retry(c));
-  }
+    }
 
-  /**
-   * Listen to collection and process new arrivals.
-   * @param collection The collection
-   */
-  private void listen(
-    final MongoCollection<T> collection){
+    /**
+     * Listen to collection and process new arrivals.
+     * @param collection The collection
+     */
+    private void listen(
+        final MongoCollection<T> collection) {
+
         String methodName = "listen";
-    MongoState state = MongoState.ITEM_STATE_BUSY;
-    @SuppressWarnings("unchecked")
-    Class<MongoItem<T>> managedEntityClass = (Class<MongoItem<T>>) new MongoItem<T>(null, null).getClass();
-    List<MongoItem<T>> mongoItems;
+        MongoState state = MongoState.ITEM_STATE_BUSY;
+        @SuppressWarnings("unchecked")
+        Class<MongoItem<T>> managedEntityClass = (Class<MongoItem<T>>) new MongoItem<T>(null, null).getClass();
+        List<MongoItem<T>> mongoItems;
 
-    logger.debug(methodName, "Started listening to collection [", collection.getName(), "].");
+        logger.debug(methodName, "Started listening to collection [", collection.getName(), "].");
 
-        while (ServiceState.isActive() == true){
+        while (ServiceState.isActive() == true) {
 
-            while (ServiceState.isSuspended() == true){
+            while (ServiceState.isSuspended() == true) {
+
                 ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
-      }
+            }
 
-            while (true){
-        logger.debug(methodName, "Collection [", collection.getName(), "]: total=", collection.getTotalItems().get(),
-          ", failed=", collection.getFailedItems().get(), ", pending=", collection.getPendingItems().get());
+            while (true) {
+                logger.debug(methodName, "Collection [", collection.getName(), "]: total=", collection.getTotalItems().get(),
+                    ", failed=", collection.getFailedItems().get(), ", pending=", collection.getPendingItems().get());
 
-        try{
+                try {
 
-                    if (state == MongoState.ITEM_STATE_BUSY){
-            logger.debug(methodName, "Mark busy items as new in collection [", collection.getName(), "].");
+                    if (state == MongoState.ITEM_STATE_BUSY) {
+                        logger.debug(methodName, "Mark busy items as new in collection [", collection.getName(), "].");
 
                         mongoClient.update(collection.getName(),
-              Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId())),
-              Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
+                            Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId())),
+                            Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
 
                         state = MongoState.ITEM_STATE_NEW;
-          }
+                    }
 
-          logger.debug(methodName, "Find new items in collection [", collection.getName(), "].");
+                    logger.debug(methodName, "Find new items in collection [", collection.getName(), "].");
 
                     mongoItems = mongoClient.find(collection.getName(), Query.query(
-            Criteria.where("state").is(state.getId())).limit(getFetchSize()), managedEntityClass);
+                        Criteria.where("state").is(state.getId())).limit(getFetchSize()), managedEntityClass);
 
-                    if (mongoItems.size() == 0){
-            break;
-          }
+                    if (mongoItems.size() == 0) {
+                        break;
+                    }
 
                     updateState(collection, mongoItems, MongoState.ITEM_STATE_BUSY.getId());
 
-                    if (collection.getBatchProcessor() != null){
+                    if (collection.getBatchProcessor() != null) {
+
                         processBatches(collection, mongoItems);
-          }
-                    else if (collection.getSingletonProcessor() != null){
+                    }
+
+                    else if (collection.getSingletonProcessor() != null) {
+
                         processSingles(collection, mongoItems);
-          }
+                    }
 
-        }
-        catch (Throwable exception){
-          logger.error(methodName, exception.getMessage(), exception);
+                }
+                catch (Throwable exception) {
+                    logger.error(methodName, exception.getMessage(), exception);
 
-          break;
-        }
+                    break;
+                }
 
-      }
+            }
 
             ThreadControl.wait(collection, getPollInterval(), TimeUnit.MILLISECONDS);
+        }
+
     }
 
-  }
+    /**
+     * Process items in collection's queue.
+     * @param collection The collection
+     */
+    private void process(
+        final MongoCollection<T> collection) {
 
-  /**
-   * Process items in collection's queue.
-   * @param collection The collection
-   */
-  private void process(
-    final MongoCollection<T> collection){
         String methodName = "process";
 
-        while (ServiceState.isActive() == true){
+        while (ServiceState.isActive() == true) {
 
-            while (ServiceState.isSuspended() == true){
+            while (ServiceState.isSuspended() == true) {
+
                 ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
-      }
+            }
 
-      try{
+            try {
 
-                if (collection.getBatchProcessor() != null){
+                if (collection.getBatchProcessor() != null) {
+
                     processBatches(collection);
-        }
-                else if (collection.getSingletonProcessor() != null){
-                    processSingles(collection);
-        }
-        else{
-                    ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
-        }
+                }
 
-      }
-      catch (Throwable exception){
-        logger.error(methodName, exception.getMessage(), exception);
-      }
+                else if (collection.getSingletonProcessor() != null) {
+
+                    processSingles(collection);
+                }
+                else {
+
+                    ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
+                }
+
+            }
+            catch (Throwable exception) {
+                logger.error(methodName, exception.getMessage(), exception);
+            }
+
+        }
 
     }
 
-  }
+    /**
+     * Process items in batches.
+     * @param collection The collection
+     * @param mongoItems The list of managed items
+     * @throws Exception if unable to process the items
+     */
+    private void processBatches(
+        final MongoCollection<T> collection,
+        final List<MongoItem<T>> mongoItems) throws Exception {
 
-  /**
-   * Process items in batches.
-   * @param collection The collection
-   * @param mongoItems The list of managed items
-   * @throws Exception if unable to process the items
-   */
-  private void processBatches(
-    final MongoCollection<T> collection,
-    final List<MongoItem<T>> mongoItems) throws Exception{
         BoundedBlockingQueue<List<MongoItem<T>>> queue;
-    int start;
-    int end;
+        int start;
+        int end;
 
         queue = collection.getBatchQueue();
 
-        if (mongoItems.size() <= getBatchSize()){
-            queue.add(mongoItems);
-    }
-    else{
-            start = 0;
-      end = getBatchSize();
+        if (mongoItems.size() <= getBatchSize()) {
 
-            while (start < mongoItems.size()){
+            queue.add(mongoItems);
+        }
+        else {
+
+            start = 0;
+            end = getBatchSize();
+
+            while (start < mongoItems.size()) {
+
                 queue.add(mongoItems.subList(start, end));
 
                 start += getBatchSize();
-        end = Clamp.clampInt(start + getBatchSize(), start, mongoItems.size());
-      }
+                end = Clamp.clampInt(start + getBatchSize(), start, mongoItems.size());
+            }
+
+        }
 
     }
 
-  }
+    /**
+     * Process batches of items.
+     * @param collection The collection
+     * @throws RemotingException if unable to process the items
+     */
+    private void processBatches(
+        final MongoCollection<T> collection) throws RemotingException {
 
-  /**
-   * Process batches of items.
-   * @param collection The collection
-   * @throws RemotingException if unable to process the items
-   */
-  private void processBatches(
-    final MongoCollection<T> collection) throws RemotingException{
         List<MongoItem<T>> mongoItems;
 
-    try{
+        try {
+
             mongoItems = collection.getBatchQueue().remove();
-    }
-    catch (InterruptedException exception){
-      throw new RemotingException(ExceptionType.LOCAL_APPLICATION, "Thread has been interrupted.");
-    }
+        }
+        catch (InterruptedException exception) {
+            throw new RemotingException(ExceptionType.LOCAL_APPLICATION, "Thread has been interrupted.");
+        }
 
         processBatch(collection, mongoItems);
-  }
+    }
 
-  /**
-   * Process batch of items.
-   * @param collection The collection
-   * @param mongoItems The list of managed items
-   * @throws RemotingException if unable to process the items
-   */
-  private void processBatch(
-    final MongoCollection<T> collection,
-    final List<MongoItem<T>> mongoItems) throws RemotingException{
+    /**
+     * Process batch of items.
+     * @param collection The collection
+     * @param mongoItems The list of managed items
+     * @throws RemotingException if unable to process the items
+     */
+    private void processBatch(
+        final MongoCollection<T> collection,
+        final List<MongoItem<T>> mongoItems) throws RemotingException {
+
         String methodName = "processBatch";
-    List<T> items;
+        List<T> items;
 
-    try{
+        try {
+
             items = new ArrayList<T>(mongoItems.size());
 
-      for (MongoItem<T> mongoItem : mongoItems){
-        items.add(objectMapper.convertValue(mongoItem.getItem(), entityClass));
-      }
+            for (MongoItem<T> mongoItem : mongoItems) {
+                items.add(objectMapper.convertValue(mongoItem.getItem(), entityClass));
+            }
 
             collection.getBatchProcessor().process(items);
 
@@ -306,74 +354,81 @@ public class MongoListener<T> extends MongoListenerConfig{
             collection.getTotalItems().increment(mongoItems.size());
 
             collection.getPendingItems().decrement(mongoItems.size());
-    }
-    catch (Throwable mutedException){
+        }
+        catch (Throwable mutedException) {
 
-            if (collection.getSingletonProcessor() != null){
-        logger.debug(methodName, "Batch processing failed.  Processing items individually.");
+            if (collection.getSingletonProcessor() != null) {
+                logger.debug(methodName, "Batch processing failed.  Processing items individually.");
 
-                for (MongoItem<T> mongoItem : mongoItems){
+                for (MongoItem<T> mongoItem : mongoItems) {
+
                     processSingle(collection, mongoItem);
+                }
+
+            }
+
         }
 
-      }
-
     }
 
-  }
+    /**
+     * Process items individually.
+     * @param collection The collection
+     * @param mongoItems The list of managed items
+     * @throws Exception if unable to process the items
+     */
+    private void processSingles(
+        final MongoCollection<T> collection,
+        final List<MongoItem<T>> mongoItems) throws Exception {
 
-  /**
-   * Process items individually.
-   * @param collection The collection
-   * @param mongoItems The list of managed items
-   * @throws Exception if unable to process the items
-   */
-  private void processSingles(
-    final MongoCollection<T> collection,
-    final List<MongoItem<T>> mongoItems) throws Exception{
         BoundedBlockingQueue<MongoItem<T>> queue;
 
         queue = collection.getSingletonQueue();
 
-        for (MongoItem<T> mongoItem : mongoItems){
+        for (MongoItem<T> mongoItem : mongoItems) {
+
             queue.add(mongoItem);
+        }
+
     }
 
-  }
+    /**
+     * Process items from collection's queue.
+     * @param collection The collection
+     * @throws RemotingException if unable to process the items
+     */
+    private void processSingles(
+        final MongoCollection<T> collection) throws RemotingException {
 
-  /**
-   * Process items from collection's queue.
-   * @param collection The collection
-   * @throws RemotingException if unable to process the items
-   */
-  private void processSingles(
-    final MongoCollection<T> collection) throws RemotingException{
         MongoItem<T> mongoItem;
 
-    try{
+        try {
+
             mongoItem = collection.getSingletonQueue().remove();
-    }
-    catch (InterruptedException exception){
-      throw new RemotingException(ExceptionType.LOCAL_APPLICATION, "Thread has been interrupted.");
-    }
+        }
+        catch (InterruptedException exception) {
+            throw new RemotingException(ExceptionType.LOCAL_APPLICATION, "Thread has been interrupted.");
+        }
 
         processSingle(collection, mongoItem);
-  }
+    }
 
-  /**
-   * Process item.
-   * @param collection The collection
-   * @param mongoItem The managed item
-   * @throws RemotingException if unable to process the item
-   */
-  private void processSingle(
-    final MongoCollection<T> collection,
-    final MongoItem<T> mongoItem) throws RemotingException{
+    /**
+     * Process item.
+     * @param collection The collection
+     * @param mongoItem The managed item
+     * @throws RemotingException if unable to process the item
+     */
+    private void processSingle(
+        final MongoCollection<T> collection,
+        final MongoItem<T> mongoItem) throws RemotingException {
+
         T item;
 
         collection.getTotalItems().increment();
 
-    try{
+        try {
+
             item = objectMapper.convertValue(mongoItem.getItem(), entityClass);
 
             collection.getSingletonProcessor().process(item);
@@ -381,152 +436,161 @@ public class MongoListener<T> extends MongoListenerConfig{
             delete(collection, mongoItem);
 
             collection.getPendingItems().decrement();
-    }
-    catch (Throwable exception){
+        }
+        catch (Throwable exception) {
+
             collection.getFailedItems().increment();
 
             updateState(collection, mongoItem, MongoState.ITEM_STATE_ERROR.getId(), exception.getMessage());
 
             collection.getPendingItems().decrement();
+        }
+
     }
 
-  }
+    /**
+     * Refresh collection.  Updates the number of pending items in the collection.
+     * @param collection The collection
+     */
+    private void refresh(
+        final MongoCollection<T> collection) {
 
-  /**
-   * Refresh collection.  Updates the number of pending items in the collection.
-   * @param collection The collection
-   */
-  private void refresh(
-    final MongoCollection<T> collection){
         String methodName = "refresh";
-    long pending;
+        long pending;
 
-        while (ServiceState.isActive() == true){
+        while (ServiceState.isActive() == true) {
 
-            while (ServiceState.isSuspended() == true){
+            while (ServiceState.isSuspended() == true) {
+
                 ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
-      }
+            }
 
-      try{
-        logger.debug(methodName, "Count number of pending items in collection [", collection.getName(), "].");
+            try {
+                logger.debug(methodName, "Count number of pending items in collection [", collection.getName(), "].");
 
                 pending = mongoClient.count(collection.getName(), Query.query(
-          Criteria.where("").orOperator(
-          Criteria.where("state").is(MongoState.ITEM_STATE_NEW.getId()),
-          Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId()))));
+                    Criteria.where("").orOperator(
+                    Criteria.where("state").is(MongoState.ITEM_STATE_NEW.getId()),
+                    Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId()))));
 
                 collection.getPendingItems().reset(pending);
-      }
-      catch (Throwable exception){
-        logger.error(methodName, exception.getMessage(), exception);
-      }
+            }
+            catch (Throwable exception) {
+                logger.error(methodName, exception.getMessage(), exception);
+            }
 
             ThreadControl.wait(collection, getRefreshInterval(), TimeUnit.MILLISECONDS);
+        }
+
     }
 
-  }
+    /**
+     * Schedule items in collection for retry.
+     * @param collection The collection
+     */
+    private void retry(
+        final MongoCollection<T> collection) {
 
-  /**
-   * Schedule items in collection for retry.
-   * @param collection The collection
-   */
-  private void retry(
-    final MongoCollection<T> collection){
         String methodName = "retry";
 
-        while (ServiceState.isActive() == true){
+        while (ServiceState.isActive() == true) {
 
-            while (ServiceState.isSuspended() == true){
+            while (ServiceState.isSuspended() == true) {
+
                 ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
-      }
+            }
 
-      try{
-        logger.debug(methodName, "Mark items with exceptions as new in collection [", collection.getName(), "].");
+            try {
+                logger.debug(methodName, "Mark items with exceptions as new in collection [", collection.getName(), "].");
 
                 mongoClient.update(collection.getName(),
-          Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_ERROR.getId())),
-          Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
-      }
-      catch (Throwable exception){
-        logger.error(methodName, exception.getMessage(), exception);
-      }
+                    Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_ERROR.getId())),
+                    Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
+            }
+            catch (Throwable exception) {
+                logger.error(methodName, exception.getMessage(), exception);
+            }
 
             ThreadControl.wait(collection, getRetryInterval(), TimeUnit.MILLISECONDS);
+        }
+
     }
 
-  }
+    /**
+     * Update state of item in collection.
+     * @param collection The collection
+     * @param mongoItem The managed item
+     * @param state The item state
+     * @param stateMessage The state message
+     * @throws RemotingException if unable to update the state of the item
+     */
+    private void updateState(
+        final MongoCollection<T> collection,
+        final MongoItem mongoItem,
+        final String state,
+        final String stateMessage) throws RemotingException {
 
-  /**
-   * Update state of item in collection.
-   * @param collection The collection
-   * @param mongoItem The managed item
-   * @param state The item state
-   * @param stateMessage The state message
-   * @throws RemotingException if unable to update the state of the item
-   */
-  private void updateState(
-    final MongoCollection<T> collection,
-    final MongoItem mongoItem,
-    final String state,
-    final String stateMessage) throws RemotingException{
         mongoItem.setState(state);
-    mongoItem.setStateMessage(stateMessage);
+        mongoItem.setStateMessage(stateMessage);
 
         mongoClient.update(collection.getName(), mongoItem);
-  }
+    }
 
-  /**
-   * Update state of items in collection.
-   * @param collection The collection
-   * @param mongoItems The list of managed items
-   * @param state The item state
-   * @throws RemotingException if unable to update the state of the items
-   */
-  private void updateState(
-    final MongoCollection<T> collection,
-    final List<? extends MongoItem> mongoItems,
-    final String state) throws RemotingException{
+    /**
+     * Update state of items in collection.
+     * @param collection The collection
+     * @param mongoItems The list of managed items
+     * @param state The item state
+     * @throws RemotingException if unable to update the state of the items
+     */
+    private void updateState(
+        final MongoCollection<T> collection,
+        final List<? extends MongoItem> mongoItems,
+        final String state) throws RemotingException {
+
         List<String> ids;
 
         ids = new ArrayList<String>(mongoItems.size());
 
-    for (MongoItem mongoItem : mongoItems){
-      ids.add(mongoItem.getId());
-    }
+        for (MongoItem mongoItem : mongoItems) {
+            ids.add(mongoItem.getId());
+        }
 
         mongoClient.update(collection.getName(), Query.query(Criteria.where("_id").in(ids)), Update.update("state", state));
-  }
+    }
 
-  /**
-   * Delete item from collection.
-   * @param collection The collection
-   * @param mongoItem The managed item
-   * @throws RemotingException if unable to delete the item
-   */
-  private void delete(
-    final MongoCollection<T> collection,
-    final MongoItem mongoItem) throws RemotingException{
+    /**
+     * Delete item from collection.
+     * @param collection The collection
+     * @param mongoItem The managed item
+     * @throws RemotingException if unable to delete the item
+     */
+    private void delete(
+        final MongoCollection<T> collection,
+        final MongoItem mongoItem) throws RemotingException {
+
         mongoClient.delete(collection.getName(), mongoItem);
-  }
+    }
 
-  /**
-   * Delete items from collection.
-   * @param collection The collection
-   * @param mongoItems The list of managed items
-   * @throws RemotingException if unable to delete the items
-   */
-  private void delete(
-    final MongoCollection<T> collection,
-    final List<? extends MongoItem> mongoItems) throws RemotingException{
+    /**
+     * Delete items from collection.
+     * @param collection The collection
+     * @param mongoItems The list of managed items
+     * @throws RemotingException if unable to delete the items
+     */
+    private void delete(
+        final MongoCollection<T> collection,
+        final List<? extends MongoItem> mongoItems) throws RemotingException {
+
         List<String> ids;
 
         ids = new ArrayList<String>(mongoItems.size());
 
-    for (MongoItem mongoItem : mongoItems){
-      ids.add(mongoItem.getId());
-    }
+        for (MongoItem mongoItem : mongoItems) {
+            ids.add(mongoItem.getId());
+        }
 
         mongoClient.delete(collection.getName(), Query.query(Criteria.where("_id").in(ids)));
-  }
+    }
 
 }
