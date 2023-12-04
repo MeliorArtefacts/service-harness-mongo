@@ -7,6 +7,7 @@
         Service Harness
 */
 package org.melior.client.mongo;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -15,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import org.bson.Document;
 import org.melior.client.exception.RemotingException;
+import org.melior.context.transaction.TransactionContext;
 import org.melior.logging.core.Logger;
 import org.melior.logging.core.LoggerFactory;
 import org.melior.service.exception.ExceptionType;
@@ -27,6 +29,7 @@ import org.springframework.data.mongodb.core.SimpleMongoClientDatabaseFactory;
 import org.springframework.data.mongodb.core.convert.DefaultDbRefResolver;
 import org.springframework.data.mongodb.core.convert.DefaultMongoTypeMapper;
 import org.springframework.data.mongodb.core.convert.MappingMongoConverter;
+import org.springframework.data.mongodb.core.index.CompoundIndexDefinition;
 import org.springframework.data.mongodb.core.mapping.MongoMappingContext;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -147,6 +150,27 @@ public class MongoClient extends MongoClientConfig {
     }
 
     /**
+     * Set index for collection.
+     * @param collectionName The collection name
+     * @param indexDefinition The index definition
+     * @throws RemotingException if unable to set the index
+     */
+    public void setIndex(
+        final String collectionName,
+        final Document indexDefinition) throws RemotingException {
+
+        try {
+
+            mongoTemplate.indexOps(collectionName).ensureIndex(new CompoundIndexDefinition(indexDefinition));
+        }
+        catch (Exception exception) {
+
+            throw new RemotingException(ExceptionType.REMOTING_COMMUNICATION, "Failed to set index: " + exception.getMessage(), exception);
+        }
+
+    }
+
+    /**
      * Insert item in collection.
      * @param <T> The type
      * @param collectionName The collection name
@@ -205,7 +229,23 @@ public class MongoClient extends MongoClientConfig {
         final String collectionName,
         final T item) throws RemotingException {
 
-        insert(collectionName, new MongoItem<T>(item, MongoState.ITEM_STATE_NEW.getId()));
+        insert(collectionName, new MongoItem<T>(TransactionContext.get(), item, ItemState.NEW.getId()));
+    }
+
+    /**
+     * Insert managed item in collection.
+     * @param <T> The type
+     * @param collectionName The collection name
+     * @param item The item
+     * @param delay The delay
+     * @throws RemotingException if unable to insert the item
+     */
+    public <T> void insertManaged(
+        final String collectionName,
+        final T item,
+        final Duration delay) throws RemotingException {
+
+        insert(collectionName, new MongoItem<T>(TransactionContext.get(), item, ItemState.NEW.getId(), delay));
     }
 
     /**
@@ -221,21 +261,6 @@ public class MongoClient extends MongoClientConfig {
         final T... items) throws RemotingException {
 
         insert(collectionName, Arrays.asList(items));
-    }
-
-    /**
-     * Insert managed items in collection.
-     * @param <T> The type
-     * @param collectionName The collection name
-     * @param items The list of items
-     * @throws RemotingException if unable to insert the items
-     */
-    @SuppressWarnings("unchecked")
-    public <T> void insertManaged(
-        final String collectionName,
-        final T... items) throws RemotingException {
-
-        insertManaged(collectionName, Arrays.asList(items));
     }
 
     /**
@@ -302,7 +327,31 @@ public class MongoClient extends MongoClientConfig {
         managedItems = new ArrayList<MongoItem<T>>(items.size());
 
         for (T item : items) {
-            managedItems.add(new MongoItem<T>(item, MongoState.ITEM_STATE_NEW.getId()));
+            managedItems.add(new MongoItem<T>(TransactionContext.get(), item, ItemState.NEW.getId()));
+        }
+
+        insert(collectionName, managedItems);
+    }
+
+    /**
+     * Insert managed items in collection.
+     * @param <T> The type
+     * @param collectionName The collection name
+     * @param items The list of items
+     * @param delay The delay
+     * @throws RemotingException if unable to insert the items
+     */
+    public <T> void insertManaged(
+        final String collectionName,
+        final Collection<T> items,
+        final Duration delay) throws RemotingException {
+
+        Collection<MongoItem<T>> managedItems;
+
+        managedItems = new ArrayList<MongoItem<T>>(items.size());
+
+        for (T item : items) {
+            managedItems.add(new MongoItem<T>(TransactionContext.get(), item, ItemState.NEW.getId(), delay));
         }
 
         insert(collectionName, managedItems);

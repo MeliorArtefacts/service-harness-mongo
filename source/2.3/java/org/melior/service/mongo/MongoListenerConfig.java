@@ -29,6 +29,8 @@ public class MongoListenerConfig extends ClientConfig {
 
     private int refreshInterval = 5 * 1000;
 
+    private int recoverInterval = 60 * 1000;
+
     /**
      * Constructor.
      */
@@ -51,7 +53,7 @@ public class MongoListenerConfig extends ClientConfig {
      */
     public void setPollInterval(
         final int pollInterval) {
-        this.pollInterval = Clamp.clampInt(pollInterval * 1000, 0, Integer.MAX_VALUE);;
+        this.pollInterval = Clamp.clampInt(pollInterval * 1000, 0, Integer.MAX_VALUE);
     }
 
     /**
@@ -137,6 +139,23 @@ public class MongoListenerConfig extends ClientConfig {
     public void setRefreshInterval(
         final int refreshInterval) {
         this.refreshInterval = Clamp.clampInt(refreshInterval * 1000, 0, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Get recover interval.
+     * @return The recover interval
+     */
+    public int getRecoverInterval() {
+        return recoverInterval;
+    }
+
+    /**
+     * Set recover interval.
+     * @param recoverInterval The recover interval, specified in seconds
+     */
+    public void setRecoverInterval(
+        final int recoverInterval) {
+        this.recoverInterval = Clamp.clampInt(recoverInterval * 1000, 0, Integer.MAX_VALUE);
     }
 
 }

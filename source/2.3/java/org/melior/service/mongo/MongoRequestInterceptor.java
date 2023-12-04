@@ -8,7 +8,6 @@
 */
 package org.melior.service.mongo;
 import java.util.List;
-import java.util.UUID;
 import org.melior.context.service.ServiceContext;
 import org.melior.context.transaction.TransactionContext;
 import org.melior.logging.core.Logger;
@@ -118,8 +117,11 @@ public class MongoRequestInterceptor<T> extends MongoCollection<T> {
 
             throw new ApplicationException(ExceptionType.UNEXPECTED, "Failed to process batch of items: " + exception.getMessage());
         }
+        finally {
 
-        completeRequest(isException);
+            completeRequest(isException);
+        }
+
     }
 
     /**
@@ -153,8 +155,11 @@ public class MongoRequestInterceptor<T> extends MongoCollection<T> {
 
             throw new ApplicationException(ExceptionType.UNEXPECTED, "Failed to process item: " + exception.getMessage());
         }
+        finally {
 
-        completeRequest(isException);
+            completeRequest(isException);
+        }
+
     }
 
     /**
@@ -170,8 +175,6 @@ public class MongoRequestInterceptor<T> extends MongoCollection<T> {
 
         transactionContext = TransactionContext.get();
 
-        transactionContext.startTransaction();
-        transactionContext.setTransactionId(getTransactionId());
         transactionContext.setOperation(operation);
 
         try {
@@ -211,7 +214,6 @@ public class MongoRequestInterceptor<T> extends MongoCollection<T> {
             logger.error(methodName, "Failed to notify work manager that request has completed: ", exception.getMessage(), exception);
         }
 
-        transactionContext.reset();
     }
 
     /**
@@ -220,15 +222,6 @@ public class MongoRequestInterceptor<T> extends MongoCollection<T> {
      */
     private String getOperation() {
         return "mongo/" + getName();
-    }
-
-    /**
-     * Get transaction identifier.  Generates a UUID.
-     * @return The resultant transaction identifier
-     */
-    private String getTransactionId() {
-
-        return UUID.randomUUID().toString();
     }
 
 }

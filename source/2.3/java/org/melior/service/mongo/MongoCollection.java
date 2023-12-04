@@ -8,7 +8,7 @@
 */
 package org.melior.service.mongo;
 import java.util.List;
-
+import java.util.function.Supplier;
 import org.melior.client.mongo.MongoItem;
 import org.melior.service.work.BatchProcessor;
 import org.melior.service.work.SingletonProcessor;
@@ -44,9 +44,13 @@ public class MongoCollection<T> {
 
     private String name;
 
+    private boolean supportsDelays;
+
     private BatchProcessor<T> batchProcessor;
 
     private SingletonProcessor<T> singletonProcessor;
+
+    private Supplier<ListenerState> stateSupplier = () -> ListenerState.ACTIVE;
 
     private BoundedBlockingQueue<List<MongoItem<T>>> batchQueue;
 
@@ -64,7 +68,7 @@ public class MongoCollection<T> {
      * @param name The name of the collection
      * @param capacity The capacity of the collection
      */
-    public MongoCollection(
+    MongoCollection(
         final MongoListener<T> listener,
         final String name,
         final int capacity) {
@@ -82,6 +86,16 @@ public class MongoCollection<T> {
         totalItems = Counter.of(0);
         failedItems = Counter.of(0);
         pendingItems = ClampedCounter.of(0, 0, Long.MAX_VALUE);
+    }
+
+    /**
+     * Enable support for delayed items.
+     * @return The Mongo collection
+     */
+    public MongoCollection<T> delays() {
+        supportsDelays = true;
+
+        return this;
     }
 
     /**
@@ -113,6 +127,19 @@ public class MongoCollection<T> {
     }
 
     /**
+     * Set state supplier.  Controls the state of the {@code MongoListener}
+     * which listens to the collection.
+     * @param stateSupplier The state supplier
+     * @return The Mongo collection
+     */
+    public MongoCollection<T> state(
+        final Supplier<ListenerState> stateSupplier) {
+        this.stateSupplier = stateSupplier;
+
+        return this;
+    }
+
+    /**
      * Start listening to collection.
      */
     public void start() {
@@ -125,6 +152,14 @@ public class MongoCollection<T> {
      */
     String getName() {
         return name;
+    }
+
+    /**
+     * Indicates if the collection supports delayed items.
+     * @return true if the collection supports delayed items, false otherwise
+     */
+    boolean supportsDelays() {
+        return supportsDelays;
     }
 
     /**
@@ -141,6 +176,14 @@ public class MongoCollection<T> {
      */
     SingletonProcessor<T> getSingletonProcessor() {
         return singletonProcessor;
+    }
+
+    /**
+     * Get state supplier.
+     * @return The state supplier
+     */
+    Supplier<ListenerState> getStateSupplier() {
+        return stateSupplier;
     }
 
     /**

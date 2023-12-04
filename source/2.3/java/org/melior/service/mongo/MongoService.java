@@ -25,8 +25,10 @@ import org.melior.service.exception.ApplicationException;
  * haven been processed, and routes them past the configured {@code WorkManager}
  * to allow the {@code WorkManager} to control the flow of the items through
  * the application.
-* @author Melior
-* @since 2.3
+ * @author Melior
+ * @since 2.3
+ * @see MongoRequestInterceptor
+ * @see AbstractService
 */
 public abstract class MongoService extends AbstractService {
 

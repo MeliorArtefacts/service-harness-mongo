@@ -11,18 +11,21 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-
+import org.bson.Document;
 import org.melior.client.exception.RemotingException;
 import org.melior.client.mongo.MongoClient;
 import org.melior.client.mongo.MongoItem;
-import org.melior.client.mongo.MongoState;
+import org.melior.client.mongo.ItemState;
+import org.melior.context.transaction.TransactionContext;
 import org.melior.logging.core.Logger;
 import org.melior.logging.core.LoggerFactory;
 import org.melior.service.core.ServiceState;
 import org.melior.service.exception.ExceptionType;
 import org.melior.util.collection.BoundedBlockingQueue;
 import org.melior.util.number.Clamp;
+import org.melior.util.object.ObjectUtil;
 import org.melior.util.thread.DaemonThread;
 import org.melior.util.thread.ThreadControl;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -142,27 +145,37 @@ public class MongoListener<T> extends MongoListenerConfig {
     void start(
         final MongoCollection<T> collection) {
 
+        MongoSession session;
+
+        session = new MongoSession();
+        session.setId(getSessionId());
+        session.setCollection(collection.getName());
+
         final MongoCollection<T> c = collection;
-        DaemonThread.create(() -> listen(c));
+        DaemonThread.create(() -> listen(c, session));
 
         for (int i = 0; i < getThreads(); i++) {
             DaemonThread.create(() -> process(c));
         }
 
-        DaemonThread.create(() -> refresh(c));
+        DaemonThread.create(() -> refresh(c, session));
 
-        DaemonThread.create(() -> retry(c));
+        DaemonThread.create(() -> retry(c, session));
+
+        DaemonThread.create(() -> recover(c));
     }
 
     /**
      * Listen to collection and process new arrivals.
      * @param collection The collection
+     * @param session The session
      */
     private void listen(
-        final MongoCollection<T> collection) {
+        final MongoCollection<T> collection,
+        final MongoSession session) {
 
         String methodName = "listen";
-        MongoState state = MongoState.ITEM_STATE_BUSY;
+        boolean prepared = false;
         @SuppressWarnings("unchecked")
         Class<MongoItem<T>> managedEntityClass = (Class<MongoItem<T>>) new MongoItem<T>(null, null).getClass();
         List<MongoItem<T>> mongoItems;
@@ -171,37 +184,61 @@ public class MongoListener<T> extends MongoListenerConfig {
 
         while (ServiceState.isActive() == true) {
 
-            while (ServiceState.isSuspended() == true) {
+            while ((ServiceState.isSuspended() == true) || (session.isActive() == false)) {
 
                 ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
             }
 
-            while (true) {
+            while (collection.getStateSupplier().get() == ListenerState.ACTIVE) {
                 logger.debug(methodName, "Collection [", collection.getName(), "]: total=", collection.getTotalItems().get(),
                     ", failed=", collection.getFailedItems().get(), ", pending=", collection.getPendingItems().get());
 
                 try {
 
-                    if (state == MongoState.ITEM_STATE_BUSY) {
-                        logger.debug(methodName, "Mark busy items as new in collection [", collection.getName(), "].");
+                    if (prepared == false) {
+                        logger.debug(methodName, "Set index for collection [", collection.getName(), "].");
 
-                        mongoClient.update(collection.getName(),
-                            Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId())),
-                            Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
+                        mongoClient.setIndex(collection.getName(), new Document()
+                            .append("state", 1)
+                            .append("session", 1)
+                            .append("eligible", 1));
 
-                        state = MongoState.ITEM_STATE_NEW;
+                        prepared = true;
                     }
 
-                    logger.debug(methodName, "Find new items in collection [", collection.getName(), "].");
+                    logger.debug(methodName, "Allocate new items in collection [", collection.getName(), "].");
 
-                    mongoItems = mongoClient.find(collection.getName(), Query.query(
-                        Criteria.where("state").is(state.getId())).limit(getFetchSize()), managedEntityClass);
+                    if (collection.supportsDelays() == true) {
+
+                        mongoClient.update(collection.getName(),
+                            Query.query(Criteria.where("").andOperator(
+                                Criteria.where("state").is(ItemState.NEW.getId()),
+                                Criteria.where("session").is(null),
+                                Criteria.where("eligible").lte(System.currentTimeMillis())))
+                                .limit(getFetchSize()),
+                            Update.update("session", session.getId()));
+                    }
+                    else {
+
+                        mongoClient.update(collection.getName(),
+                            Query.query(Criteria.where("").andOperator(
+                                Criteria.where("state").is(ItemState.NEW.getId()),
+                                Criteria.where("session").is(null)))
+                                .limit(getFetchSize()),
+                            Update.update("session", session.getId()));
+                    }
+
+                    mongoItems = mongoClient.find(collection.getName(),
+                        Query.query(Criteria.where("").andOperator(
+                            Criteria.where("state").is(ItemState.NEW.getId()),
+                            Criteria.where("session").is(session.getId())))
+                            .limit(getFetchSize()), managedEntityClass);
 
                     if (mongoItems.size() == 0) {
                         break;
                     }
 
-                    updateState(collection, mongoItems, MongoState.ITEM_STATE_BUSY.getId());
+                    updateState(collection, mongoItems, ItemState.BUSY.getId());
 
                     if (collection.getBatchProcessor() != null) {
 
@@ -215,7 +252,7 @@ public class MongoListener<T> extends MongoListenerConfig {
 
                 }
                 catch (Throwable exception) {
-                    logger.error(methodName, exception.getMessage(), exception);
+                    logger.error(methodName, "Failed to process new items: ", exception.getMessage(), exception);
 
                     break;
                 }
@@ -338,6 +375,7 @@ public class MongoListener<T> extends MongoListenerConfig {
 
         String methodName = "processBatch";
         List<T> items;
+        TransactionContext transactionContext;
 
         try {
 
@@ -347,7 +385,19 @@ public class MongoListener<T> extends MongoListenerConfig {
                 items.add(objectMapper.convertValue(mongoItem.getItem(), entityClass));
             }
 
-            collection.getBatchProcessor().process(items);
+            transactionContext = TransactionContext.get();
+            transactionContext.startTransaction();
+            transactionContext.setTransactionId(getTransactionId(null));
+            transactionContext.setCorrelationId(transactionContext.getTransactionId());
+
+            try {
+
+                collection.getBatchProcessor().process(items);
+            }
+            finally {
+
+                transactionContext.reset();
+            }
 
             delete(collection, mongoItems);
 
@@ -424,6 +474,7 @@ public class MongoListener<T> extends MongoListenerConfig {
         final MongoItem<T> mongoItem) throws RemotingException {
 
         T item;
+        TransactionContext transactionContext;
 
         collection.getTotalItems().increment();
 
@@ -431,7 +482,19 @@ public class MongoListener<T> extends MongoListenerConfig {
 
             item = objectMapper.convertValue(mongoItem.getItem(), entityClass);
 
-            collection.getSingletonProcessor().process(item);
+            transactionContext = TransactionContext.get();
+            transactionContext.startTransaction();
+            transactionContext.setTransactionId(getTransactionId(ObjectUtil.coalesce(mongoItem.getTransaction(), mongoItem.getCorrelation())));
+            transactionContext.setCorrelationId(ObjectUtil.coalesce(mongoItem.getCorrelation(), transactionContext.getTransactionId()));
+
+            try {
+
+                collection.getSingletonProcessor().process(item);
+            }
+            finally {
+
+                transactionContext.reset();
+            }
 
             delete(collection, mongoItem);
 
@@ -441,7 +504,7 @@ public class MongoListener<T> extends MongoListenerConfig {
 
             collection.getFailedItems().increment();
 
-            updateState(collection, mongoItem, MongoState.ITEM_STATE_ERROR.getId(), exception.getMessage());
+            updateState(collection, mongoItem, ItemState.ERROR.getId(), exception.getMessage());
 
             collection.getPendingItems().decrement();
         }
@@ -449,11 +512,14 @@ public class MongoListener<T> extends MongoListenerConfig {
     }
 
     /**
-     * Refresh collection.  Updates the number of pending items in the collection.
+     * Refresh collection.  Updates the heartbeat for the session and
+     * updates the number of pending items in the collection.
      * @param collection The collection
+     * @param session The session
      */
     private void refresh(
-        final MongoCollection<T> collection) {
+        final MongoCollection<T> collection,
+        final MongoSession session) {
 
         String methodName = "refresh";
         long pending;
@@ -466,17 +532,36 @@ public class MongoListener<T> extends MongoListenerConfig {
             }
 
             try {
-                logger.debug(methodName, "Count number of pending items in collection [", collection.getName(), "].");
+                logger.debug(methodName, "Update heartbeat for session [", session.getId(), "] for collection [", collection.getName(), "].");
 
-                pending = mongoClient.count(collection.getName(), Query.query(
-                    Criteria.where("").orOperator(
-                    Criteria.where("state").is(MongoState.ITEM_STATE_NEW.getId()),
-                    Criteria.where("state").is(MongoState.ITEM_STATE_BUSY.getId()))));
+                try {
 
-                collection.getPendingItems().reset(pending);
+                    session.setHeartbeat(System.currentTimeMillis());
+                    mongoClient.update("session", session);
+
+                    session.setActive(true);
+                }
+                catch (Throwable exception) {
+
+                    session.setActive(false);
+
+                    throw exception;
+                }
+
+                if (collection.getStateSupplier().get() == ListenerState.ACTIVE) {
+                    logger.debug(methodName, "Count number of pending items in collection [", collection.getName(), "].");
+
+                    pending = mongoClient.count(collection.getName(), Query.query(
+                        Criteria.where("").orOperator(
+                        Criteria.where("state").is(ItemState.NEW.getId()),
+                        Criteria.where("state").is(ItemState.BUSY.getId()))));
+
+                    collection.getPendingItems().reset(pending);
+                }
+
             }
             catch (Throwable exception) {
-                logger.error(methodName, exception.getMessage(), exception);
+                logger.error(methodName, "Failed to refresh collection: ", exception.getMessage(), exception);
             }
 
             ThreadControl.wait(collection, getRefreshInterval(), TimeUnit.MILLISECONDS);
@@ -487,9 +572,11 @@ public class MongoListener<T> extends MongoListenerConfig {
     /**
      * Schedule items in collection for retry.
      * @param collection The collection
+     * @param session The session
      */
     private void retry(
-        final MongoCollection<T> collection) {
+        final MongoCollection<T> collection,
+        final MongoSession session) {
 
         String methodName = "retry";
 
@@ -501,17 +588,82 @@ public class MongoListener<T> extends MongoListenerConfig {
             }
 
             try {
-                logger.debug(methodName, "Mark items with exceptions as new in collection [", collection.getName(), "].");
 
-                mongoClient.update(collection.getName(),
-                    Query.query(Criteria.where("state").is(MongoState.ITEM_STATE_ERROR.getId())),
-                    Update.update("state", MongoState.ITEM_STATE_NEW.getId()));
+                if (collection.getStateSupplier().get() == ListenerState.ACTIVE) {
+                    logger.debug(methodName, "Mark items with exceptions as new in collection [", collection.getName(), "].");
+
+                    mongoClient.update(collection.getName(),
+                        Query.query(Criteria.where("").andOperator(
+                            Criteria.where("state").is(ItemState.ERROR.getId()),
+                            Criteria.where("session").is(session.getId()))),
+                        Update.update("state", ItemState.NEW.getId())
+                            .set("session", null));
+                }
+
             }
             catch (Throwable exception) {
-                logger.error(methodName, exception.getMessage(), exception);
+                logger.error(methodName, "Failed to schedule items for retry: ", exception.getMessage(), exception);
             }
 
             ThreadControl.wait(collection, getRetryInterval(), TimeUnit.MILLISECONDS);
+        }
+
+    }
+
+    /**
+     * Recover abandoned items in collection.
+     * @param collection The collection
+     */
+    private void recover(
+        final MongoCollection<T> collection) {
+
+        String methodName = "recover";
+        List<MongoSession> mongoSessions;
+
+        while (ServiceState.isActive() == true) {
+
+            while (ServiceState.isSuspended() == true) {
+
+                ThreadControl.wait(collection, 100, TimeUnit.MILLISECONDS);
+            }
+
+            try {
+
+                if (collection.getStateSupplier().get() == ListenerState.ACTIVE) {
+                    logger.debug(methodName, "Find expired sessions for collection [", collection.getName(), "].");
+
+                    mongoSessions = mongoClient.find("session",
+                        Query.query(Criteria.where("").andOperator(
+                            Criteria.where("collection").is(collection.getName()),
+                            Criteria.where("heartbeat").lte(System.currentTimeMillis() - getInactivityTimeout()))), MongoSession.class);
+
+                    if (mongoSessions.size() > 0) {
+
+                        for (MongoSession mongoSession : mongoSessions) {
+                            logger.debug(methodName, "Recover abandoned items from session [", mongoSession.getId(), "] in collection [", collection.getName(), "].");
+
+                            mongoClient.update(collection.getName(),
+                                Query.query(Criteria.where("session").is(mongoSession.getId())),
+                                Update.update("state", ItemState.NEW.getId())
+                                    .set("session", null));
+                        }
+
+                        for (MongoSession mongoSession : mongoSessions) {
+                            logger.debug(methodName, "Delete session [", mongoSession.getId(), "] for collection [", collection.getName(), "].");
+
+                            mongoClient.delete("session", mongoSession);
+                        }
+
+                    }
+
+                }
+
+            }
+            catch (Throwable exception) {
+                logger.error(methodName, "Failed to recover abandoned items: ", exception.getMessage(), exception);
+            }
+
+            ThreadControl.wait(collection, getRecoverInterval(), TimeUnit.MILLISECONDS);
         }
 
     }
@@ -591,6 +743,26 @@ public class MongoListener<T> extends MongoListenerConfig {
         }
 
         mongoClient.delete(collection.getName(), Query.query(Criteria.where("_id").in(ids)));
+    }
+
+    /**
+     * Get session identifier.  Generates a UUID.
+     * @return The resultant session identifier
+     */
+    private String getSessionId() {
+
+        return UUID.randomUUID().toString();
+    }
+
+    /**
+     * Get transaction identifier.  Generates a UUID if the transaction identifier is undefined.
+     * @param transactionId The provided transaction identifier
+     * @return The resultant transaction identifier
+     */
+    private String getTransactionId(
+        final String transactionId) {
+
+        return ObjectUtil.coalesce(transactionId, UUID.randomUUID().toString());
     }
 
 }
